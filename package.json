@@ -1,0 +1,28 @@
+{
+  "name": "webcollage-server",
+  "version": "1.0.0",
+  "description": "A simple webcollage server app for saving and serving published collages.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zipavlin/webcollage-server.git"
+  },
+  "keywords": [
+    "collage",
+    "experimental"
+  ],
+  "author": "Žiga Pavlin",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/zipavlin/webcollage-server/issues"
+  },
+  "homepage": "https://github.com/zipavlin/webcollage-server#readme",
+  "dependencies": {
+    "hapi": "^17.5.2",
+    "hapi-mongodb": "^7.1.0",
+    "joi": "^13.4.0"
+  }
+}
