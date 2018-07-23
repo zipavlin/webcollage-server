@@ -1,11 +1,12 @@
 const Hapi = require('hapi');
+const http = require('request');
 const Joi = require('joi');
 const secrets = require('./secrets');
 
 // create server
 const server = Hapi.server({
-    host: 'localhost',
-    port: 8000,
+    host: secrets.server.host,
+    port: secrets.server.port,
     // routes: {cors: {origin: ['http://*.github.com', 'https://*.github.com']} }
 });
 
@@ -19,20 +20,53 @@ server.route({
 });
 server.route({
     method:'GET',
+    path:'/check/{url}',
+    handler:function(request,h) {
+        const url = decodeURIComponent(request.params.url);
+        // check url headers
+        return new Promise((resolve, reject) => {
+            http.head(url, (err, res, body) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    if (res.headers['x-frame-options'] || res.headers['X-Frame-Options']) {
+                        resolve(403);
+                    } else {
+                        resolve(200);
+                    }
+                }
+            });
+        }).then(statusCode => {
+            return h.response({code: statusCode, status: statusCode === 200 ? 'allowed' : 'forbidden'}).code(statusCode);
+        }).catch(err => {
+            return h.response(err).code(500);
+        });
+    }
+});
+server.route({
+    method:'GET',
     path:'/list/{page?}',
     handler: async function(request,h) {
         const db = request.mongo.db;
+        const page = request.params.page || 0;
         const amount = 12;
         try {
-            return await db.collection('posts').find({}, {
+            const count = await db.collection('posts').count({});
+            const posts = await db.collection('posts').find({}, {
                 sort: {created_at: -1},
-                skip: (request.params.page || 0) * amount,
+                skip: page * amount,
                 limit: amount,
-                projection: {thumbnail: 1, author: 1, title: 1}
-            });
+                fields: {_id: 1, thumbnail: 1, author: 1, title: 1} // this should be renamed to 'projection' in newer version
+            }).toArray();
+            return {
+                count,
+                hasPrev: page >= 2,
+                hasNext: count - ((page + 1) * amount) > 0,
+                posts
+            };
         }
         catch (err) {
-            return [];
+            return h.response([]).code(200);
         }
     }
 });
@@ -54,43 +88,63 @@ server.route({
 server.route({
     method:'POST',
     path:'/save',
-    config: {
-        handler: async function(request,h) {
-            if (!request.params.id) return null;
-            const db = request.mongo.db;
-            const doc = request.payload;
-            // add created at to payload
-            doc.created_at = new Date();
-            // save result
-            try {
-                return await db.collection('posts').insertOne(doc);
+    handler: async function(request,h) {
+        const db = request.mongo.db;
+        const doc = request.payload;
+        // normalize title & author
+        doc.title = doc.title ? doc.title : 'Untitled';
+        doc.author = doc.author ? doc.author : 'Anonymous';
+        // add created at to payload
+        doc.created_at = new Date();
+        // remove state
+        doc.items = doc.items.map(item => {
+            delete item.state;
+            return item;
+        });
+        // add thumbnail
+        doc.thumbnail = null;
+        // save result
+        try {
+            const cursor = await db.collection('posts').insertOne(doc);
+            if (cursor) {
+                return h.response({status: 'ok', code: 200}).code(200);
+            } else {
+                return h.response({status: 'error', code: 400}).code(400);
             }
-            catch (err) {
-                return null;
-            }
-        },
-        validate: { 
-            payload: {
-                title: Joi.string().required(),
-                author: Joi.string().required(),
-                items: Joi.array().items(
-                    Joi.object().keys({
-                        width: Joi.number().required(),
-                        height: Joi.number().required(),
-                        x: Joi.number().required(),
-                        y: Joi.number().required(),
-                        clip: Joi.array().required(),
-                        angle: Joi.number().required(),
-                        childWidth: Joi.number().required(),
-                        childHeight: Joi.number().required(),
-                        childX: Joi.number().required(),
-                        childY: Joi.number().required(),
-                    })
-                ).required()
-            }
-        } 
+        }
+        catch (err) {
+            return null;
+        }
+    },
+    options: {
+        validate: {
+            payload: Joi.object().keys({
+            title: Joi.string().allow(null),
+            author: Joi.string().allow(null),
+            items: Joi.array().min(1).required().items(
+                Joi.object().keys({
+                    width: Joi.number().required(),
+                    height: Joi.number().required(),
+                    x: Joi.number().required(),
+                    y: Joi.number().required(),
+                    clip: Joi.array().required().allow([]).items(
+                        Joi.array().items(
+                            Joi.number().required(),
+                            Joi.number().required()
+                        )
+                    ),
+                    angle: Joi.number().required(),
+                    childWidth: Joi.number().required(),
+                    childHeight: Joi.number().required(),
+                    childX: Joi.number().required(),
+                    childY: Joi.number().required(),
+                    url: Joi.string().required(),
+                    state: Joi.string().allow(null)
+                })
+            )
+        })
+        }
     }
-
 });
 
 // Start the server
@@ -115,6 +169,6 @@ async function start() {
     }
 
     console.log('Server running at:', server.info.uri);
-};
+}
 
 start();
